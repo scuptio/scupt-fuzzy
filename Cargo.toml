@@ -1,0 +1,22 @@
+
+
+[package]
+name = "scupt-fuzzy"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+bincode = "2.0.0-rc.3"
+scupt-util = { git = "https://github.com/scuptio/scupt-util.git" }
+scupt-net = { git = "https://github.com/scuptio/scupt-net.git" }
+clap = { version = "4.4.8", features = ["derive"] }
+serde_json = { version = "1.0.107", features = ["std", "arbitrary_precision", "preserve_order"] }
+serde = { version = "1.0.151", features = ["derive", "rc"] }
+lazy_static = { version = "1.4.0", features = [] }
+scc = { version = "2.0.4", features = [] }
+async-trait = "0.1.58"
+tokio = { version = "1.32.0", features = ["full", "tracing"] }
+rusqlite = "0.30.0"
+tracing = "0.1.40"

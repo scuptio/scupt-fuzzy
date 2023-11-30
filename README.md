@@ -1,2 +1,2 @@
-# scupt-action-fuzzer
+# scupt-fuzzy
 Fuzz testing library for distributed systems.
