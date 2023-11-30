@@ -18,5 +18,7 @@ pub enum FuzzyEvent {
     /// duplicate message
     Duplicate(Vec<u64>),
 
-    Crash
+    Crash,
+    
+    Restart(u64)
 }
