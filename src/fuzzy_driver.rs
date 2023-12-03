@@ -32,12 +32,15 @@ struct FuzzyInner {
 }
 
 impl <F:FuzzyGenerator + 'static> FuzzyDriver<F> {
-    pub fn new(path:String, sender:Arc<dyn Sender<String>>, event_generator:F) -> Self {
+    pub fn new(
+        path:String,
+        notifier:Notifier,
+        sender:Arc<dyn Sender<String>>,
+        event_generator:F) -> Self {
         Self {
             path_store: path.clone(),
-            notifier: Default::default(),
+            notifier,
             event_generator,
-
             inner: Arc::new(FuzzyInner { atomic_sequence: AtomicU64::new(0), sender, path }),
         }
     }

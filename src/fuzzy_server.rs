@@ -100,6 +100,7 @@ impl <F:FuzzyGenerator> FuzzyServerInner<F> {
             fuzzy_driver: Arc::new(
                 FuzzyDriver::new(
                 path,
+                notify.clone(),
                 sender_to_node,
                 event_generator
             )),
