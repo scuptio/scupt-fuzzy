@@ -10,7 +10,8 @@ use scupt_net::opt_send::OptSend;
 use scupt_net::task::spawn_local_task;
 use scupt_util::error_type::ET;
 use scupt_util::message::Message;
-
+use scupt_util::node_id::NID;
+use scc::HashSet as ConcurrentHashSet;
 use scupt_util::res::Res;
 use scupt_util::res_of::res_sqlite;
 use tokio::time::sleep;
@@ -26,6 +27,7 @@ pub struct FuzzyDriver<F:FuzzyGenerator + 'static>  {
 }
 
 struct FuzzyInner {
+    dis_connect:ConcurrentHashSet<(NID, NID)>,
     atomic_sequence: AtomicU64,
     sender: Arc<dyn Sender<String>>,
     path:String,
@@ -41,7 +43,9 @@ impl <F:FuzzyGenerator + 'static> FuzzyDriver<F> {
             path_store: path.clone(),
             notifier,
             event_generator,
-            inner: Arc::new(FuzzyInner { atomic_sequence: AtomicU64::new(0), sender, path }),
+            inner: Arc::new(FuzzyInner {
+                dis_connect: Default::default(),
+                atomic_sequence: AtomicU64::new(0), sender, path }),
         }
     }
 
@@ -51,7 +55,6 @@ impl <F:FuzzyGenerator + 'static> FuzzyDriver<F> {
         let _r = trans.execute(
             r#"create table action (
                     id interger primary key,
-                    message text not null,
                     event text not null
                 );"#, ());
         res_sqlite(_r)?;
@@ -78,40 +81,35 @@ impl <F:FuzzyGenerator + 'static> FuzzyDriver<F> {
 
     pub async fn incoming_command(&self, command:FuzzyCommand) -> Res<()>{
         let seq =  self.event_generator.gen(command);
-        for (event, command) in seq {
-            match command {
-                FuzzyCommand::Message(message) => {
-                    let id = self.inner.gen_id();
-                    self.fuzzy_event_for_message(id, event, message).await?;
-                }
-            }
+        for event in seq {
+            let id = self.inner.gen_id();
+            self.fuzzy_event_for_message(id, event).await?;
         }
         Ok(())
     }
 
-    fn store_event_message(&self, id:u64, event:FuzzyEvent, message:Message<String>) {
+    fn store_event_message(&self, id:u64, event:FuzzyEvent) {
 
         let mut conn = Connection::open(self.path_store.clone()).unwrap();
         let transaction = conn.transaction().unwrap();
         let event_s = serde_json::to_string_pretty(&event).unwrap();
-        let message_s = serde_json::to_string_pretty(&message).unwrap();
         let _ = transaction.execute("\
-                            insert into action(id, message, event) \
-                            values(?1, ?2, ?3)", (&id, &message_s, &event_s)).unwrap();
+                            insert into action(id,  event) \
+                            values(?1, ?2)", (&id,  &event_s)).unwrap();
 
         transaction.commit().unwrap();
     }
 
-    async fn fuzzy_event_for_message(&self, id:u64, event:FuzzyEvent, message:Message<String>) -> Res<()> {
-        self.store_event_message(id, event.clone(), message.clone());
-        self.schedule_fuzzy_event(id, event, message).await?;
+    async fn fuzzy_event_for_message(&self, id:u64, event:FuzzyEvent) -> Res<()> {
+        self.store_event_message(id, event.clone());
+        self.schedule_fuzzy_event(id, event).await?;
         Ok(())
     }
 
-    async fn schedule_fuzzy_event(&self, id:u64, event:FuzzyEvent, message:Message<String>) -> Res<()>{
+    async fn schedule_fuzzy_event(&self, id:u64, event:FuzzyEvent) -> Res<()>{
         let inner = self.inner.clone();
         let _ = spawn_local_task(self.notifier.clone(), "", async move {
-            inner.schedule(id, event, message).await?;
+            inner.schedule(id, event).await?;
             Ok::<(), ET>(())
         })?;
         Ok(())
@@ -119,33 +117,43 @@ impl <F:FuzzyGenerator + 'static> FuzzyDriver<F> {
 }
 
 impl FuzzyInner {
-    async fn schedule(&self, id:u64, event:FuzzyEvent, message:Message<String>) -> Res<()> {
+    async fn schedule(&self, id:u64, event:FuzzyEvent) -> Res<()> {
         match event {
-            FuzzyEvent::Delay(ms) => {
+            FuzzyEvent::Delay(ms, message) => {
                 if ms > 0 {
                     sleep(Duration::from_millis(ms)).await;
                 }
                 self.send(id, message).await?;
             }
-            FuzzyEvent::Duplicate(vec) => {
+            FuzzyEvent::Duplicate(vec, message) => {
                 for ms in vec {
                     sleep(Duration::from_millis(ms)).await;
                     self.send(id, message.clone()).await?;
                 }
             }
             FuzzyEvent::Lost => {}
-            FuzzyEvent::Restart(ms) => {
+            FuzzyEvent::Restart(ms, message) => {
                 sleep(Duration::from_millis(ms)).await;
-                self.send(id, message.clone()).await?;
+                self.send(id, message).await?;
             }
-            FuzzyEvent::Crash => {
-                self.send(id, message.clone()).await?;
+            FuzzyEvent::Crash(message) => {
+                self.send(id, message).await?;
+            },
+            FuzzyEvent::PartitionStart( ids1, ids2) => {
+                self.partition_start(ids1, ids2);
+            }
+            FuzzyEvent::PartitionRecovery(ms, ids1, ids2) => {
+                sleep(Duration::from_millis(ms)).await;
+                self.partition_end(ids1, ids2);
             }
         }
         Ok(())
     }
 
     async fn send(&self, id:u64, message:Message<String>) -> Res<()> {
+        if !self.can_connect(message.source(), message.dest()) {
+            return Ok(());
+        }
         self.store_message_delivery(id);
         let _= self.sender.send(message, OptSend::default()).await?;
         Ok(())
@@ -167,4 +175,25 @@ impl FuzzyInner {
         transaction.commit().unwrap();
     }
 
+    fn can_connect(&self, id1:NID, id2:NID) -> bool {
+        !self.dis_connect.contains(&(id1, id2))
+    }
+    fn partition_end(&self, ids1 :Vec<NID>, ids2:Vec<NID>) {
+        for i in &ids1 {
+            for j in &ids2 {
+                let _ = self.dis_connect.remove(&(*i, *j));
+            }
+        }
+
+    }
+
+    fn partition_start(&self, ids1 :Vec<NID>, ids2:Vec<NID>) {
+        for i in &ids1 {
+            for j in &ids2 {
+                if *i != *j {
+                    let _ = self.dis_connect.insert((*i, *j));
+                }
+            }
+        }
+    }
 }
