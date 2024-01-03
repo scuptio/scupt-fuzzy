@@ -29,8 +29,9 @@ impl FuzzyClient {
         })
     }
 
-    pub async fn send<M:MsgTrait + 'static>(&self, message: Message<M>) -> Res<()> {
-        self.inner.send(message).await
+    pub async fn fuzzy_rpc<M:MsgTrait + 'static>(&self, message: Message<M>) -> Res<()> {
+        self.inner.fuzzy_rpc(message).await?;
+        Ok(())
     }
 }
 
@@ -48,7 +49,7 @@ impl FuzzyClientInner {
         }).unwrap();
 
         Ok(Self {
-            client: client,
+            client,
             _join_handler: join_handler,
         })
 
@@ -65,15 +66,16 @@ impl FuzzyClientInner {
         }
     }
 
-    async fn send<M:MsgTrait + 'static>(&self, message: Message<M>) -> Res<()> {
+    async fn fuzzy_rpc<M:MsgTrait + 'static>(&self, message: Message<M>) -> Res<()> {
         let source = message.source();
         let dest = message.dest();
         let json_string = serde_json::to_string_pretty(&message).unwrap();
-        let fuzzy_command = FuzzyCommand::Message(Message::new(json_string, source, dest));
+        let fuzzy_command = FuzzyCommand::MessageReq(Message::new(json_string, source, dest));
         if !self.client.is_connected().await {
             self.connect().await?;
         }
         self.client.send(Message::new(fuzzy_command, source, dest)).await?;
+        let _ = self.client.recv().await?;
         Ok(())
     }
 }

@@ -113,7 +113,7 @@ pub async fn fuzzy_testing_message<M:MsgTrait + 'static>(name:&str, message:Mess
     let opt = FUZZY.get(&name.to_string());
     match opt {
         Some(v) => {
-            let _ = v.get().send(message).await;
+            let _ = v.get().fuzzy_rpc(message).await;
         }
         None => {
 

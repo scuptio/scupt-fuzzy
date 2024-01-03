@@ -14,7 +14,8 @@ Decode,
 Encode,
 )]
 pub enum FuzzyCommand {
-    Message(Message<String>)
+    MessageReq(Message<String>),
+    MessageResp
 }
 
 impl MsgTrait for FuzzyCommand {

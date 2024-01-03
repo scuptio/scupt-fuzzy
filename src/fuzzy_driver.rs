@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 use rusqlite::Connection;
-use scupt_net::message_receiver::Receiver;
+use scupt_net::message_receiver::ReceiverRR;
 use scupt_net::message_sender::Sender;
 use scupt_net::notifier::Notifier;
 use scupt_net::opt_send::OptSend;
@@ -72,10 +72,14 @@ impl <F:FuzzyGenerator + 'static> FuzzyDriver<F> {
 
     pub async fn message_loop(
         &self,
-        receiver:Arc<dyn Receiver<FuzzyCommand>>) -> Res<()> {
+        receiver:Arc<dyn ReceiverRR<FuzzyCommand>>) -> Res<()> {
         loop {
-            let command = receiver.receive().await?;
-            self.incoming_command(command.payload()).await?;
+            let (msg, r) = receiver.receive().await?;
+            self.incoming_command(msg.payload_ref().clone()).await?;
+            let resp = Message::new(FuzzyCommand::MessageResp,
+                                    msg.dest(),
+                                    msg.source());
+            r.send(resp).await?;
         }
     }
 

@@ -7,7 +7,7 @@ use std::time::Duration;
 use scupt_net::event_sink::{ESConnectOpt, ESServeOpt, EventSink};
 
 use scupt_net::io_service::{IOService, IOServiceOpt};
-use scupt_net::message_receiver::Receiver;
+use scupt_net::message_receiver::ReceiverRR;
 
 
 
@@ -153,7 +153,8 @@ impl <F:FuzzyGenerator> FuzzyServerInner<F> {
 
         let notifier1 = self.notifier.clone();
         let driver = self.fuzzy_driver.clone();
-        let receiver = self.service_message_incoming.message_receiver();
+        let receiver = self.service_message_incoming.message_receiver_rr();
+        // let receiver = self.service_message_incoming.message_receiver();
 
         let notifier = self.notifier.clone();
         ls.spawn_local(async move {
@@ -208,7 +209,7 @@ impl <F:FuzzyGenerator> FuzzyServerInner<F> {
     async fn server_handle_recv_message(
         notifier: Notifier,
         fuzzy_driver: Arc<FuzzyDriver<F>>,
-        receiver:Vec<Arc<dyn Receiver<FuzzyCommand>>>
+        receiver:Vec<Arc<dyn ReceiverRR<FuzzyCommand>>>
     ) -> Res<()> {
         for r in receiver {
             let driver = fuzzy_driver.clone();
