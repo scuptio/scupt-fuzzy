@@ -19,10 +19,11 @@ use crate::fuzzy_command::FuzzyCommand;
 use crate::fuzzy_event::FuzzyEvent;
 use crate::fuzzy_generator::FuzzyGenerator;
 
+#[derive(Clone)]
 pub struct FuzzyDriver<F:FuzzyGenerator + 'static>  {
     path_store: String,
     notifier : Notifier,
-    event_generator : F,
+    event_generator : Arc<F>,
     inner:Arc<FuzzyInner>,
 }
 
@@ -42,7 +43,7 @@ impl <F:FuzzyGenerator + 'static> FuzzyDriver<F> {
         Self {
             path_store: path.clone(),
             notifier,
-            event_generator,
+            event_generator:Arc::new(event_generator),
             inner: Arc::new(FuzzyInner {
                 dis_connect: Default::default(),
                 atomic_sequence: AtomicU64::new(0), sender, path }),
@@ -75,11 +76,15 @@ impl <F:FuzzyGenerator + 'static> FuzzyDriver<F> {
         receiver:Arc<dyn ReceiverRR<FuzzyCommand>>) -> Res<()> {
         loop {
             let (msg, r) = receiver.receive().await?;
-            self.incoming_command(msg.payload_ref().clone()).await?;
-            let resp = Message::new(FuzzyCommand::MessageResp,
-                                    msg.dest(),
-                                    msg.source());
-            r.send(resp).await?;
+            let _self:Self = self.clone();
+            let _ = spawn_local_task(self.notifier.clone(), "", async move {
+                _self.incoming_command(msg.payload_ref().clone()).await?;
+                let resp = Message::new(FuzzyCommand::MessageResp,
+                                        msg.dest(),
+                                        msg.source());
+                r.send(resp).await?;
+                Ok::<(), ET>(())
+            });
         }
     }
 
