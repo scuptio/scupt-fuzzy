@@ -14,6 +14,7 @@ use scupt_util::node_id::NID;
 use scc::HashSet as ConcurrentHashSet;
 use scupt_util::res::Res;
 use scupt_util::res_of::res_sqlite;
+use scupt_util::serde_json_string::SerdeJsonString;
 use tokio::time::sleep;
 use crate::fuzzy_command::FuzzyCommand;
 use crate::fuzzy_event::FuzzyEvent;
@@ -30,7 +31,7 @@ pub struct FuzzyDriver<F:FuzzyGenerator + 'static>  {
 struct FuzzyInner {
     dis_connect:ConcurrentHashSet<(NID, NID)>,
     atomic_sequence: AtomicU64,
-    sender: Arc<dyn Sender<String>>,
+    sender: Arc<dyn Sender<SerdeJsonString>>,
     path:String,
 }
 
@@ -38,7 +39,7 @@ impl <F:FuzzyGenerator + 'static> FuzzyDriver<F> {
     pub fn new(
         path:String,
         notifier:Notifier,
-        sender:Arc<dyn Sender<String>>,
+        sender:Arc<dyn Sender<SerdeJsonString>>,
         event_generator:F) -> Self {
         Self {
             path_store: path.clone(),
@@ -164,7 +165,10 @@ impl FuzzyInner {
             return Ok(());
         }
         self.store_message_delivery(id);
-        let _= self.sender.send(message, OptSend::default()).await?;
+        let m = message.map(|s| {
+            SerdeJsonString::new(s)
+        });
+        let _= self.sender.send(m, OptSend::default()).await?;
         Ok(())
     }
 

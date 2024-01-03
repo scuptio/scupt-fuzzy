@@ -16,6 +16,7 @@ use scupt_net::task::spawn_local_task;
 use scupt_util::error_type::ET;
 use scupt_util::node_id::NID;
 use scupt_util::res::Res;
+use scupt_util::serde_json_string::SerdeJsonString;
 use tokio::runtime::Builder;
 use tokio::task::LocalSet;
 use tokio::time::sleep;
@@ -33,7 +34,7 @@ struct FuzzyServerInner<F:FuzzyGenerator + 'static>  {
     server_addr:SocketAddr,
     notifier:Notifier,
     fuzzy_driver:Arc<FuzzyDriver<F>>,
-    service_message_to_nodes:IOService<String>,
+    service_message_to_nodes:IOService<SerdeJsonString>,
     service_message_incoming:IOService<FuzzyCommand>,
 }
 
