@@ -224,7 +224,7 @@ impl <F:FuzzyGenerator + 'static,I:Initializer + 'static> FuzzyServerInner<F, I>
             let recv = sender.send(msg, opt).await?;
             let _ = recv.receive().await?;
         }
-        notify.notify_waiters();
+        notify.notify_one();
         Ok(())
     }
 
