@@ -90,7 +90,7 @@ impl <F:FuzzyGenerator + 'static> FuzzyDriver<F> {
     }
 
     pub async fn incoming_command(&self, command:FuzzyCommand) -> Res<()>{
-        let seq =  self.event_generator.gen(command);
+        let seq =  self.event_generator.gen(command).await;
         for event in seq {
             let id = self.inner.gen_id();
             self.fuzzy_event_for_message(id, event).await?;
@@ -99,7 +99,6 @@ impl <F:FuzzyGenerator + 'static> FuzzyDriver<F> {
     }
 
     fn store_event_message(&self, id:u64, event:FuzzyEvent) {
-
         let mut conn = Connection::open(self.path_store.clone()).unwrap();
         let transaction = conn.transaction().unwrap();
         let event_s = serde_json::to_string_pretty(&event).unwrap();
