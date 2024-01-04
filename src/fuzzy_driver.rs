@@ -90,7 +90,7 @@ impl <F:FuzzyGenerator + 'static> FuzzyDriver<F> {
     }
 
     pub async fn incoming_command(&self, command:FuzzyCommand) -> Res<()>{
-        let seq =  self.event_generator.gen(command).await;
+        let seq =  self.event_generator.gen(command);
         for event in seq {
             let id = self.inner.gen_id();
             self.fuzzy_event_for_message(id, event).await?;
