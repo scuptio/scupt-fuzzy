@@ -1,8 +1,7 @@
-
-
 use std::sync::Arc;
 use std::thread;
 use std::thread::JoinHandle;
+
 use scupt_net::client::{Client, OptClientConnect};
 use scupt_net::notifier::Notifier;
 use scupt_util::message::{Message, MsgTrait};
@@ -10,7 +9,8 @@ use scupt_util::node_id::NID;
 use scupt_util::res::Res;
 use tokio::runtime;
 use tokio::task::LocalSet;
-use crate::fuzzy_command::FuzzyCommand;
+
+use crate::fuzzy_command::{FuzzyCmdType, FuzzyCommand};
 
 pub struct  FuzzyClient {
     inner: Arc<FuzzyClientInner>
@@ -29,8 +29,8 @@ impl FuzzyClient {
         })
     }
 
-    pub async fn fuzzy_rpc<M:MsgTrait + 'static>(&self, message: Message<M>) -> Res<()> {
-        self.inner.fuzzy_rpc(message).await?;
+    pub async fn fuzzy_rpc<M: MsgTrait + 'static>(&self, cmd_type: FuzzyCmdType, message: Message<M>) -> Res<()> {
+        self.inner.fuzzy_rpc(cmd_type, message).await?;
         Ok(())
     }
 }
@@ -66,16 +66,23 @@ impl FuzzyClientInner {
         }
     }
 
-    async fn fuzzy_rpc<M:MsgTrait + 'static>(&self, message: Message<M>) -> Res<()> {
+
+    async fn fuzzy_rpc<M: MsgTrait + 'static>(&self, cmd_type: FuzzyCmdType, message: Message<M>) -> Res<()> {
         let source = message.source();
         let dest = message.dest();
         let json_string = serde_json::to_string_pretty(&message).unwrap();
-        let fuzzy_command = FuzzyCommand::MessageReq(Message::new(json_string, source, dest));
+        let fuzzy_command = match cmd_type {
+            FuzzyCmdType::Initialize => {
+                FuzzyCommand::Initialize(Message::new(json_string, source, dest))
+            }
+            FuzzyCmdType::MessageReq => {
+                FuzzyCommand::MessageReq(Message::new(json_string, source, dest))
+            }
+        };
         if !self.client.is_connected().await {
             self.connect().await?;
         }
         self.client.send(Message::new(fuzzy_command, source, dest)).await?;
-        let _ = self.client.recv().await?;
         Ok(())
     }
 }

@@ -1,15 +1,16 @@
 use std::any::Any;
+use std::sync::{Arc, Mutex};
+use std::vec::Vec;
 
 use lazy_static::lazy_static;
 use scc::HashMap as ConcurrentHashMap;
 use scupt_net::notifier::Notifier;
 use scupt_util::message::{Message, MsgTrait};
 use scupt_util::node_id::NID;
-use crate::fuzzy_client::FuzzyClient;
-use std::sync::{Arc, Mutex};
-
-use std::vec::Vec;
 use scupt_util::serde_json_value::SerdeJsonValue;
+
+use crate::fuzzy_client::FuzzyClient;
+use crate::fuzzy_command::FuzzyCmdType;
 
 pub trait FEventMsgHandler : Send + Sync + Any {
     fn on_handle(&self, name:String, message:Message<String>);
@@ -113,7 +114,7 @@ pub async fn fuzzy_testing_message<M:MsgTrait + 'static>(name:&str, message:Mess
     let opt = FUZZY.get(&name.to_string());
     match opt {
         Some(v) => {
-            let _ = v.get().fuzzy_rpc(message).await;
+            let _ = v.get().fuzzy_rpc(FuzzyCmdType::MessageReq, message).await;
         }
         None => {
 
@@ -121,11 +122,19 @@ pub async fn fuzzy_testing_message<M:MsgTrait + 'static>(name:&str, message:Mess
     }
 }
 
-
+pub async fn fuzzy_init<M: MsgTrait + 'static>(name: &str, message: Message<M>) {
+    let opt = FUZZY.get(&name.to_string());
+    match opt {
+        Some(v) => {
+            let _ = v.get().fuzzy_rpc(FuzzyCmdType::Initialize, message).await;
+        }
+        None => {}
+    }
+}
 
 /// Fuzzy testing setup
 #[macro_export]
-macro_rules! fuzzy_setup {
+macro_rules! fuzzy_test_setup {
     ($name:expr, $id:expr, $addr:expr) => {
         {
             scupt_fuzzy::fuzzy::fuzzy_testing_setup($name, $id, $addr);
@@ -135,7 +144,7 @@ macro_rules! fuzzy_setup {
 
 /// Fuzzy testing unset
 #[macro_export]
-macro_rules! fuzzy_unset {
+macro_rules! fuzzy_test_unset {
     ($name:expr) => {
         {
             scupt_fuzzy::fuzzy::fuzzy_testing_unset($name);
@@ -152,8 +161,17 @@ macro_rules! fuzzy_message {
     };
 }
 
+/// Is an automation enable
 #[macro_export]
-macro_rules! fuzzy_enable {
+macro_rules! fuzzy_init {
+    ($name:expr, $message:expr) => {
+        {
+            scupt_fuzzy::fuzzy::fuzzy_init($name, $message).await;
+        }
+    };
+}
+#[macro_export]
+macro_rules! fuzzy_test_enable {
     ($name:expr) => {
         {
             scupt_fuzzy::fuzzy::fuzzy_testing_enable($name)

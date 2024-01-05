@@ -1,9 +1,11 @@
-
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
+
 use rusqlite::Connection;
-use scupt_net::message_receiver::ReceiverRR;
+use scc::HashSet as ConcurrentHashSet;
+use scupt_net::message_receiver::Receiver;
 use scupt_net::message_sender::Sender;
 use scupt_net::notifier::Notifier;
 use scupt_net::opt_send::OptSend;
@@ -11,21 +13,22 @@ use scupt_net::task::spawn_local_task;
 use scupt_util::error_type::ET;
 use scupt_util::message::Message;
 use scupt_util::node_id::NID;
-use scc::HashSet as ConcurrentHashSet;
 use scupt_util::res::Res;
 use scupt_util::res_of::res_sqlite;
 use scupt_util::serde_json_string::SerdeJsonString;
 use tokio::time::sleep;
+
 use crate::fuzzy_command::FuzzyCommand;
 use crate::fuzzy_event::FuzzyEvent;
 use crate::fuzzy_generator::FuzzyGenerator;
 
 #[derive(Clone)]
-pub struct FuzzyDriver<F:FuzzyGenerator + 'static>  {
+pub struct FuzzyDriver {
     path_store: String,
     notifier : Notifier,
-    event_generator : Arc<F>,
+    event_generator: Arc<dyn FuzzyGenerator>,
     inner:Arc<FuzzyInner>,
+    node_set: ConcurrentHashSet<NID>
 }
 
 struct FuzzyInner {
@@ -35,19 +38,25 @@ struct FuzzyInner {
     path:String,
 }
 
-impl <F:FuzzyGenerator + 'static> FuzzyDriver<F> {
+impl FuzzyDriver {
     pub fn new(
         path:String,
         notifier:Notifier,
+        node_set: HashSet<NID>,
         sender:Arc<dyn Sender<SerdeJsonString>>,
-        event_generator:F) -> Self {
+        event_generator: Arc<dyn FuzzyGenerator>) -> Self {
+        let _node_set = ConcurrentHashSet::new();
+        for i in node_set {
+            let _ = _node_set.insert(i);
+        }
         Self {
             path_store: path.clone(),
             notifier,
-            event_generator:Arc::new(event_generator),
+            event_generator,
             inner: Arc::new(FuzzyInner {
                 dis_connect: Default::default(),
                 atomic_sequence: AtomicU64::new(0), sender, path }),
+            node_set: _node_set,
         }
     }
 
@@ -74,22 +83,36 @@ impl <F:FuzzyGenerator + 'static> FuzzyDriver<F> {
 
     pub async fn message_loop(
         &self,
-        receiver:Arc<dyn ReceiverRR<FuzzyCommand>>) -> Res<()> {
+        receiver: Arc<dyn Receiver<FuzzyCommand>>,
+        enable_initialize: bool
+    ) -> Res<()> {
+        if enable_initialize {
+            let mut vec = vec![];
+            loop {
+                let msg = receiver.receive().await?;
+                match msg.payload() {
+                    FuzzyCommand::Initialize(m) => {
+                        self.node_set.remove(&m.source());
+                    }
+                    FuzzyCommand::MessageReq(m) => {
+                        vec.push(FuzzyCommand::MessageReq(m));
+                    }
+                }
+                if self.node_set.is_empty() {
+                    break;
+                }
+            }
+            for m in vec {
+                self.incoming_command(m).await?;
+            }
+        }
         loop {
-            let (msg, r) = receiver.receive().await?;
-            let _self:Self = self.clone();
-            let _ = spawn_local_task(self.notifier.clone(), "", async move {
-                _self.incoming_command(msg.payload_ref().clone()).await?;
-                let resp = Message::new(FuzzyCommand::MessageResp,
-                                        msg.dest(),
-                                        msg.source());
-                r.send(resp).await?;
-                Ok::<(), ET>(())
-            });
+            let msg = receiver.receive().await?;
+            self.incoming_command(msg.payload()).await?;
         }
     }
 
-    pub async fn incoming_command(&self, command:FuzzyCommand) -> Res<()>{
+    pub async fn incoming_command(&self, command: FuzzyCommand) -> Res<()> {
         let seq =  self.event_generator.gen(command);
         for event in seq {
             let id = self.inner.gen_id();
@@ -105,7 +128,6 @@ impl <F:FuzzyGenerator + 'static> FuzzyDriver<F> {
         let _ = transaction.execute("\
                             insert into action(id,  event) \
                             values(?1, ?2)", (&id,  &event_s)).unwrap();
-
         transaction.commit().unwrap();
     }
 
@@ -115,7 +137,7 @@ impl <F:FuzzyGenerator + 'static> FuzzyDriver<F> {
         Ok(())
     }
 
-    async fn schedule_fuzzy_event(&self, id:u64, event:FuzzyEvent) -> Res<()>{
+    async fn schedule_fuzzy_event(&self, id: u64, event: FuzzyEvent) -> Res<()> {
         let inner = self.inner.clone();
         let _ = spawn_local_task(self.notifier.clone(), "", async move {
             inner.schedule(id, event).await?;
@@ -190,13 +212,13 @@ impl FuzzyInner {
     fn can_connect(&self, id1:NID, id2:NID) -> bool {
         !self.dis_connect.contains(&(id1, id2))
     }
+
     fn partition_end(&self, ids1 :Vec<NID>, ids2:Vec<NID>) {
         for i in &ids1 {
             for j in &ids2 {
                 let _ = self.dis_connect.remove(&(*i, *j));
             }
         }
-
     }
 
     fn partition_start(&self, ids1 :Vec<NID>, ids2:Vec<NID>) {
