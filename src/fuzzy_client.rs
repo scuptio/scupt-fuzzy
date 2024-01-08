@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::thread;
 use std::thread::JoinHandle;
 
-use scupt_net::client::{Client, OptClientConnect};
+use scupt_net::client::{Client, OptClient, OptClientConnect};
 use scupt_net::notifier::Notifier;
 use scupt_util::message::{Message, MsgTrait};
 use scupt_util::node_id::NID;
@@ -37,7 +37,10 @@ impl FuzzyClient {
 
 impl FuzzyClientInner {
     pub fn new(node_id:NID, name:String, addr:String, notifier:Notifier) -> Res<Self> {
-        let client =  Client::new(node_id, name, addr, notifier)?;
+        let opt = OptClient {
+            enable_testing: false,
+        };
+        let client =  Client::new(node_id, name, addr, opt, notifier)?;
         let c = client.clone();
         let join_handler = thread::Builder::new().spawn(move || {
             let ls = LocalSet::new();

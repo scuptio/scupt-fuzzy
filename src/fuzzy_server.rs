@@ -86,9 +86,11 @@ impl FuzzyServerInner {
            ) -> Res<Self> {
         let opt1 = IOServiceOpt {
             num_message_receiver: 1,
+            testing: false,
         };
         let opt2 = IOServiceOpt {
             num_message_receiver: 1,
+            testing: false,
         };
         let service_to_nodes = IOService::new(
             nid,
