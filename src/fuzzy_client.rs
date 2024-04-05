@@ -12,17 +12,17 @@ use tokio::task::LocalSet;
 
 use crate::fuzzy_command::{FuzzyCmdType, FuzzyCommand};
 
-pub struct  FuzzyClient {
-    inner: Arc<FuzzyClientInner>
+pub struct FuzzyClient {
+    inner: Arc<FuzzyClientInner>,
 }
 
-pub struct  FuzzyClientInner {
-    client :Client<FuzzyCommand>,
+pub struct FuzzyClientInner {
+    client: Client<FuzzyCommand>,
     _join_handler: JoinHandle<()>,
 }
 
 impl FuzzyClient {
-    pub fn new(node_id:NID, name:String, addr:String, notifier:Notifier) -> Res<Self> {
+    pub fn new(node_id: NID, name: String, addr: String, notifier: Notifier) -> Res<Self> {
         let inner = FuzzyClientInner::new(node_id, name, addr, notifier)?;
         Ok(Self {
             inner: Arc::new(inner)
@@ -36,11 +36,11 @@ impl FuzzyClient {
 }
 
 impl FuzzyClientInner {
-    pub fn new(node_id:NID, name:String, addr:String, notifier:Notifier) -> Res<Self> {
+    pub fn new(node_id: NID, name: String, addr: String, notifier: Notifier) -> Res<Self> {
         let opt = OptClient {
             enable_testing: false,
         };
-        let client =  Client::new(node_id, name, addr, opt, notifier)?;
+        let client = Client::new(node_id, name, addr, opt, notifier)?;
         let c = client.clone();
         let join_handler = thread::Builder::new().spawn(move || {
             let ls = LocalSet::new();
@@ -55,7 +55,6 @@ impl FuzzyClientInner {
             client,
             _join_handler: join_handler,
         })
-
     }
 
     async fn connect(&self) -> Res<()> {

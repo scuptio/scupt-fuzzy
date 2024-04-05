@@ -6,9 +6,7 @@ pub trait Initializer: Send + Sync {
 }
 
 #[derive(Clone)]
-pub struct InitializerPhantom {
-
-}
+pub struct InitializerPhantom {}
 
 impl Default for InitializerPhantom {
     fn default() -> Self {

@@ -1,8 +1,6 @@
 extern crate core;
 
 #[macro_use]
-
-
 pub mod fuzzy_generator;
 pub mod fuzzy_command;
 pub mod fuzzy_event;

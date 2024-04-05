@@ -1,6 +1,5 @@
 use std::any::Any;
 use std::sync::{Arc, Mutex};
-use std::vec::Vec;
 
 use lazy_static::lazy_static;
 use scc::HashMap as ConcurrentHashMap;
@@ -12,8 +11,8 @@ use scupt_util::serde_json_value::SerdeJsonValue;
 use crate::fuzzy_client::FuzzyClient;
 use crate::fuzzy_command::FuzzyCmdType;
 
-pub trait FEventMsgHandler : Send + Sync + Any {
-    fn on_handle(&self, name:String, message:Message<String>);
+pub trait FEventMsgHandler: Send + Sync + Any {
+    fn on_handle(&self, name: String, message: Message<String>);
 }
 
 lazy_static! {
@@ -25,16 +24,16 @@ lazy_static! {
 
 
 
-pub fn event_sequence_setup(s:&str, handle:Arc<dyn FEventMsgHandler>) {
+pub fn event_sequence_setup(s: &str, handle: Arc<dyn FEventMsgHandler>) {
     let _ = EVENT.insert(s.to_string(), Arc::new(Mutex::new(vec![])));
     let _ = EVENT_HANDLER.insert(s.to_string(), handle);
 }
 
-pub fn event_sequence_unset(s:&str) {
+pub fn event_sequence_unset(s: &str) {
     let _ = EVENT.remove(&s.to_string());
 }
 
-pub fn event_sequence_add<M:MsgTrait + 'static>(s:&str, e:Message<M>) {
+pub fn event_sequence_add<M: MsgTrait + 'static>(s: &str, e: Message<M>) {
     let opt1 = EVENT_HANDLER.get(&s.to_string());
     match opt1 {
         Some(v) => {
@@ -44,9 +43,7 @@ pub fn event_sequence_add<M:MsgTrait + 'static>(s:&str, e:Message<M>) {
                 serde_json::to_string(&m).unwrap()
             }))
         }
-        None => {
-
-        }
+        None => {}
     }
     let name = s.to_string();
     let opt = EVENT.get(&name);
@@ -57,7 +54,6 @@ pub fn event_sequence_add<M:MsgTrait + 'static>(s:&str, e:Message<M>) {
             let s = e.get().clone();
             let mut seq = s.lock().unwrap();
             seq.push(sjv);
-
         }
         None => { return; }
     };
@@ -94,31 +90,29 @@ macro_rules! event_add {
     };
 }
 
-pub fn fuzzy_testing_setup(name:&str, id:NID, addr:String) {
+pub fn fuzzy_testing_setup(name: &str, id: NID, addr: String) {
     let name = name.to_string();
     let client = FuzzyClient::new(id, name.clone(), addr, Notifier::new()).unwrap();
     let _ = FUZZY.insert(name, client);
 }
 
-pub fn fuzzy_testing_enable(name:&str) -> bool {
+pub fn fuzzy_testing_enable(name: &str) -> bool {
     FUZZY.contains(&name.to_string())
 }
 
-pub fn fuzzy_testing_unset(name:&str) {
+pub fn fuzzy_testing_unset(name: &str) {
     let _ = FUZZY.remove(&name.to_string());
     let _ = EVENT.remove(&name.to_string());
     let _ = EVENT_HANDLER.remove(&name.to_string());
 }
 
-pub async fn fuzzy_testing_message<M:MsgTrait + 'static>(name:&str, message:Message<M>) {
+pub async fn fuzzy_testing_message<M: MsgTrait + 'static>(name: &str, message: Message<M>) {
     let opt = FUZZY.get(&name.to_string());
     match opt {
         Some(v) => {
             let _ = v.get().fuzzy_rpc(FuzzyCmdType::MessageReq, message).await;
         }
-        None => {
-
-        }
+        None => {}
     }
 }
 
