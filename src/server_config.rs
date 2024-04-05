@@ -1,6 +1,7 @@
-use scupt_util::node_id::NID;
-use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
+
+use scupt_util::node_id::NID;
+use serde::{Deserialize, Serialize};
 
 #[derive(
 Clone,
@@ -9,8 +10,8 @@ Debug,
 Deserialize,
 )]
 pub struct ServerConfig {
-    pub db_path:String,
-    pub node_id:NID,
-    pub net_address:String,
-    pub peers : HashMap<NID, String>,
+    pub db_path: String,
+    pub node_id: NID,
+    pub net_address: String,
+    pub peers: HashMap<NID, String>,
 }

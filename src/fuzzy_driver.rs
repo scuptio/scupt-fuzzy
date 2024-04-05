@@ -5,8 +5,8 @@ use std::time::Duration;
 
 use rusqlite::Connection;
 use scc::HashSet as ConcurrentHashSet;
-use scupt_net::message_receiver::Receiver;
-use scupt_net::message_sender::Sender;
+use scupt_net::message_receiver_async::ReceiverAsync;
+use scupt_net::message_sender_async::SenderAsync;
 use scupt_net::notifier::Notifier;
 use scupt_net::opt_send::OptSend;
 use scupt_net::task::spawn_local_task;
@@ -25,25 +25,25 @@ use crate::fuzzy_generator::FuzzyGenerator;
 #[derive(Clone)]
 pub struct FuzzyDriver {
     path_store: String,
-    notifier : Notifier,
+    notifier: Notifier,
     event_generator: Arc<dyn FuzzyGenerator>,
-    inner:Arc<FuzzyInner>,
-    node_set: ConcurrentHashSet<NID>
+    inner: Arc<FuzzyInner>,
+    node_set: ConcurrentHashSet<NID>,
 }
 
 struct FuzzyInner {
-    dis_connect:ConcurrentHashSet<(NID, NID)>,
+    dis_connect: ConcurrentHashSet<(NID, NID)>,
     atomic_sequence: AtomicU64,
-    sender: Arc<dyn Sender<SerdeJsonString>>,
-    path:String,
+    sender: Arc<dyn SenderAsync<SerdeJsonString>>,
+    path: String,
 }
 
 impl FuzzyDriver {
     pub fn new(
-        path:String,
-        notifier:Notifier,
+        path: String,
+        notifier: Notifier,
         node_set: HashSet<NID>,
-        sender:Arc<dyn Sender<SerdeJsonString>>,
+        sender: Arc<dyn SenderAsync<SerdeJsonString>>,
         event_generator: Arc<dyn FuzzyGenerator>) -> Self {
         let _node_set = ConcurrentHashSet::new();
         for i in node_set {
@@ -55,7 +55,10 @@ impl FuzzyDriver {
             event_generator,
             inner: Arc::new(FuzzyInner {
                 dis_connect: Default::default(),
-                atomic_sequence: AtomicU64::new(0), sender, path }),
+                atomic_sequence: AtomicU64::new(0),
+                sender,
+                path,
+            }),
             node_set: _node_set,
         }
     }
@@ -69,7 +72,7 @@ impl FuzzyDriver {
                     event text not null
                 );"#, ());
         res_sqlite(_r)?;
-        let _r = trans.execute (
+        let _r = trans.execute(
             r#"create table delivery (
                     id interger primary key,
                     action_id integer not null
@@ -80,11 +83,10 @@ impl FuzzyDriver {
     }
 
 
-
     pub async fn message_loop(
         &self,
-        receiver: Arc<dyn Receiver<FuzzyCommand>>,
-        enable_initialize: bool
+        receiver: Arc<dyn ReceiverAsync<FuzzyCommand>>,
+        enable_initialize: bool,
     ) -> Res<()> {
         if enable_initialize {
             let mut vec = vec![];
@@ -113,7 +115,7 @@ impl FuzzyDriver {
     }
 
     pub async fn incoming_command(&self, command: FuzzyCommand) -> Res<()> {
-        let seq =  self.event_generator.gen(command);
+        let seq = self.event_generator.gen(command);
         for event in seq {
             let id = self.inner.gen_id();
             self.fuzzy_event_for_message(id, event).await?;
@@ -121,17 +123,17 @@ impl FuzzyDriver {
         Ok(())
     }
 
-    fn store_event_message(&self, id:u64, event:FuzzyEvent) {
+    fn store_event_message(&self, id: u64, event: FuzzyEvent) {
         let mut conn = Connection::open(self.path_store.clone()).unwrap();
         let transaction = conn.transaction().unwrap();
         let event_s = serde_json::to_string_pretty(&event).unwrap();
         let _ = transaction.execute("\
                             insert into action(id,  event) \
-                            values(?1, ?2)", (&id,  &event_s)).unwrap();
+                            values(?1, ?2)", (&id, &event_s)).unwrap();
         transaction.commit().unwrap();
     }
 
-    async fn fuzzy_event_for_message(&self, id:u64, event:FuzzyEvent) -> Res<()> {
+    async fn fuzzy_event_for_message(&self, id: u64, event: FuzzyEvent) -> Res<()> {
         self.store_event_message(id, event.clone());
         self.schedule_fuzzy_event(id, event).await?;
         Ok(())
@@ -148,7 +150,7 @@ impl FuzzyDriver {
 }
 
 impl FuzzyInner {
-    async fn schedule(&self, id:u64, event:FuzzyEvent) -> Res<()> {
+    async fn schedule(&self, id: u64, event: FuzzyEvent) -> Res<()> {
         match event {
             FuzzyEvent::Delay(ms, message) => {
                 if ms > 0 {
@@ -169,8 +171,8 @@ impl FuzzyInner {
             }
             FuzzyEvent::Crash(message) => {
                 self.send(id, message).await?;
-            },
-            FuzzyEvent::PartitionStart( ids1, ids2) => {
+            }
+            FuzzyEvent::PartitionStart(ids1, ids2) => {
                 self.partition_start(ids1, ids2);
             }
             FuzzyEvent::PartitionRecovery(ms, ids1, ids2) => {
@@ -181,7 +183,7 @@ impl FuzzyInner {
         Ok(())
     }
 
-    async fn send(&self, id:u64, message:Message<String>) -> Res<()> {
+    async fn send(&self, id: u64, message: Message<String>) -> Res<()> {
         if !self.can_connect(message.source(), message.dest()) {
             return Ok(());
         }
@@ -189,16 +191,16 @@ impl FuzzyInner {
         let m = message.map(|s| {
             SerdeJsonString::new(s)
         });
-        let _= self.sender.send(m, OptSend::default()).await?;
+        let _ = self.sender.send(m, OptSend::default()).await?;
         Ok(())
     }
 
     fn gen_id(&self) -> u64 {
         let id = self.atomic_sequence.fetch_add(1, Ordering::SeqCst);
-        return id
+        return id;
     }
 
-    fn store_message_delivery(&self, action_id:u64) {
+    fn store_message_delivery(&self, action_id: u64) {
         let mut conn = Connection::open(self.path.clone()).unwrap();
         let id = self.gen_id();
         let transaction = conn.transaction().unwrap();
@@ -209,11 +211,11 @@ impl FuzzyInner {
         transaction.commit().unwrap();
     }
 
-    fn can_connect(&self, id1:NID, id2:NID) -> bool {
+    fn can_connect(&self, id1: NID, id2: NID) -> bool {
         !self.dis_connect.contains(&(id1, id2))
     }
 
-    fn partition_end(&self, ids1 :Vec<NID>, ids2:Vec<NID>) {
+    fn partition_end(&self, ids1: Vec<NID>, ids2: Vec<NID>) {
         for i in &ids1 {
             for j in &ids2 {
                 let _ = self.dis_connect.remove(&(*i, *j));
@@ -221,7 +223,7 @@ impl FuzzyInner {
         }
     }
 
-    fn partition_start(&self, ids1 :Vec<NID>, ids2:Vec<NID>) {
+    fn partition_start(&self, ids1: Vec<NID>, ids2: Vec<NID>) {
         for i in &ids1 {
             for j in &ids2 {
                 if *i != *j {

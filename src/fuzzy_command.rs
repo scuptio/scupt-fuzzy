@@ -18,9 +18,7 @@ pub enum FuzzyCommand {
     MessageReq(Message<String>),
 }
 
-impl MsgTrait for FuzzyCommand {
-
-}
+impl MsgTrait for FuzzyCommand {}
 
 impl FuzzyCommand {
     pub fn command_type(&self) -> FuzzyCmdType {
