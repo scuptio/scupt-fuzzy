@@ -116,15 +116,7 @@ pub async fn fuzzy_testing_message<M: MsgTrait + 'static>(name: &str, message: M
     }
 }
 
-pub async fn fuzzy_init<M: MsgTrait + 'static>(name: &str, message: Message<M>) {
-    let opt = FUZZY.get(&name.to_string());
-    match opt {
-        Some(v) => {
-            let _ = v.get().fuzzy_rpc(FuzzyCmdType::Initialize, message).await;
-        }
-        None => {}
-    }
-}
+
 
 /// Fuzzy testing setup
 #[macro_export]

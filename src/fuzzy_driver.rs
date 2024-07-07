@@ -2,7 +2,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
-
+use arbitrary::Unstructured;
 use rusqlite::Connection;
 use scc::HashSet as ConcurrentHashSet;
 use scupt_net::message_receiver_async::ReceiverAsync;
@@ -20,15 +20,15 @@ use tokio::time::sleep;
 
 use crate::fuzzy_command::FuzzyCommand;
 use crate::fuzzy_event::FuzzyEvent;
-use crate::fuzzy_generator::FuzzyGenerator;
+use crate::event_gen::EventGen;
+use crate::fuzzy_setting::FuzzySetting;
 
 #[derive(Clone)]
 pub struct FuzzyDriver {
     path_store: String,
     notifier: Notifier,
-    event_generator: Arc<dyn FuzzyGenerator>,
     inner: Arc<FuzzyInner>,
-    node_set: ConcurrentHashSet<NID>,
+    event_gen:EventGen,
 }
 
 struct FuzzyInner {
@@ -43,23 +43,18 @@ impl FuzzyDriver {
         path: String,
         notifier: Notifier,
         node_set: HashSet<NID>,
-        sender: Arc<dyn SenderAsync<SerdeJsonString>>,
-        event_generator: Arc<dyn FuzzyGenerator>) -> Self {
-        let _node_set = ConcurrentHashSet::new();
-        for i in node_set {
-            let _ = _node_set.insert(i);
-        }
+        setting:FuzzySetting,
+        sender: Arc<dyn SenderAsync<SerdeJsonString>> ) -> Self {
         Self {
             path_store: path.clone(),
             notifier,
-            event_generator,
             inner: Arc::new(FuzzyInner {
                 dis_connect: Default::default(),
                 atomic_sequence: AtomicU64::new(0),
                 sender,
                 path,
             }),
-            node_set: _node_set,
+            event_gen: EventGen::new(node_set.iter().cloned().collect(), setting),
         }
     }
 
@@ -86,39 +81,29 @@ impl FuzzyDriver {
     pub async fn message_loop(
         &self,
         receiver: Arc<dyn ReceiverAsync<FuzzyCommand>>,
-        enable_initialize: bool,
+        data: Vec<u8>,
     ) -> Res<()> {
-        if enable_initialize {
-            let mut vec = vec![];
-            loop {
-                let msg = receiver.receive().await?;
-                match msg.payload() {
-                    FuzzyCommand::Initialize(m) => {
-                        self.node_set.remove(&m.source());
-                    }
-                    FuzzyCommand::MessageReq(m) => {
-                        vec.push(FuzzyCommand::MessageReq(m));
-                    }
-                }
-                if self.node_set.is_empty() {
-                    break;
-                }
-            }
-            for m in vec {
-                self.incoming_command(m).await?;
-            }
-        }
+        let mut u = Unstructured::new(data.as_slice());
         loop {
             let msg = receiver.receive().await?;
-            self.incoming_command(msg.payload()).await?;
+            self.incoming_command(msg.payload(), &mut u).await?;
         }
     }
 
-    pub async fn incoming_command(&self, command: FuzzyCommand) -> Res<()> {
-        let seq = self.event_generator.gen(command);
-        for event in seq {
-            let id = self.inner.gen_id();
-            self.fuzzy_event_for_message(id, event).await?;
+    pub async fn incoming_command(&self, command: FuzzyCommand, unstructured: &mut Unstructured<'_>) -> Res<()> {
+        match command {
+            FuzzyCommand::MessageReq(m) => {
+                let mut vec = vec![];
+                let cont = self.event_gen.fuzz_message(&m, unstructured, &mut vec);
+
+                for event in vec {
+                    let id = self.inner.gen_id();
+                    self.fuzzy_event_for_message(id, event).await?;
+                }
+                if !cont {
+                    return Err(ET::EOF);
+                }
+            }
         }
         Ok(())
     }

@@ -2,6 +2,7 @@ use scupt_util::message::Message;
 use scupt_util::node_id::NID;
 use serde::{Deserialize, Serialize};
 
+
 #[derive(
 Clone,
 Debug,
@@ -26,3 +27,5 @@ pub enum FuzzyEvent {
 
     PartitionRecovery(u64, Vec<NID>, Vec<NID>),
 }
+
+

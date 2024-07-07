@@ -74,9 +74,7 @@ impl FuzzyClientInner {
         let dest = message.dest();
         let json_string = serde_json::to_string_pretty(&message).unwrap();
         let fuzzy_command = match cmd_type {
-            FuzzyCmdType::Initialize => {
-                FuzzyCommand::Initialize(Message::new(json_string, source, dest))
-            }
+
             FuzzyCmdType::MessageReq => {
                 FuzzyCommand::MessageReq(Message::new(json_string, source, dest))
             }

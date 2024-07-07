@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use scupt_net::es_option::{ESConnectOpt, ESServeOpt};
@@ -10,7 +10,6 @@ use scupt_net::io_service_async::IOServiceAsync;
 use scupt_net::message_receiver_async::ReceiverAsync;
 use scupt_net::message_sender_async::SenderAsync;
 use scupt_net::notifier::Notifier;
-use scupt_net::opt_send::OptSend;
 use scupt_net::task::spawn_local_task;
 use scupt_util::error_type::ET;
 use scupt_util::node_id::NID;
@@ -24,8 +23,7 @@ use tracing::trace;
 
 use crate::fuzzy_command::FuzzyCommand;
 use crate::fuzzy_driver::FuzzyDriver;
-use crate::fuzzy_generator::FuzzyGenerator;
-use crate::initializer::Initializer;
+use crate::fuzzy_setting::FuzzySetting;
 
 pub struct FuzzyServer {
     inner: Arc<FuzzyServerInner>,
@@ -36,10 +34,10 @@ struct FuzzyServerInner {
     server_addr: SocketAddr,
     notifier: Notifier,
     fuzzy_driver: Arc<FuzzyDriver>,
-    enable_initialize: bool,
-    initializer: Arc<dyn Initializer>,
     service_message_to_nodes: Arc<dyn IOServiceAsync<SerdeJsonString>>,
     service_message_incoming: Arc<dyn IOServiceAsync<FuzzyCommand>>,
+    data:Mutex<Vec<u8>>,
+    notify_end_data:Notifier,
 }
 
 
@@ -51,8 +49,9 @@ impl FuzzyServer {
         notifier: Notifier,
         server_addr: SocketAddr,
         peers: HashMap<NID, SocketAddr>,
-        event_generator: Arc<dyn FuzzyGenerator>,
-        initializer: Arc<dyn Initializer>,
+        setting:FuzzySetting,
+        data:Vec<u8>,
+        notify_end_data:Notifier,
     ) -> Res<Self> {
         let r = Self {
             inner: Arc::new(
@@ -63,8 +62,9 @@ impl FuzzyServer {
                     notifier,
                     server_addr,
                     peers,
-                    event_generator,
-                    initializer,
+                    setting,
+                    data,
+                    notify_end_data
                 )?),
         };
         Ok(r)
@@ -83,8 +83,9 @@ impl FuzzyServerInner {
            notify: Notifier,
            server_addr: SocketAddr,
            peers: HashMap<NID, SocketAddr>,
-           event_generator: Arc<dyn FuzzyGenerator>,
-           initializer: Arc<dyn Initializer>,
+           setting:FuzzySetting,
+           data:Vec<u8>,
+           notify_end_data:Notifier,
     ) -> Res<Self> {
         let opt1 = IOServiceOpt {
             num_message_receiver: 1,
@@ -118,13 +119,14 @@ impl FuzzyServerInner {
                     path,
                     notify.clone(),
                     peers.clone().keys().map(|i| { *i }).collect(),
+                    setting,
                     sender_to_node,
-                    event_generator,
                 )),
-            enable_initialize: initializer.message().len() != 0,
-            initializer,
             service_message_to_nodes: service_to_nodes,
             service_message_incoming: server_service_incoming,
+
+            data: Mutex::new(data),
+            notify_end_data,
         };
         inner.fuzzy_driver.create_db()?;
         Ok(inner)
@@ -171,18 +173,25 @@ impl FuzzyServerInner {
         let driver = self.fuzzy_driver.clone();
         let receiver = self.service_message_incoming.receiver();
         let notifier = self.notifier.clone();
-        let initializer = self.initializer.clone();
-        let enable_initialize = self.enable_initialize;
         let sender_initialize_state = self.service_message_to_nodes.new_sender("send initialize state".to_string())?;
         let notify1 = Arc::new(Notify::new());
         let notify2 = notify1.clone();
+        let data = {
+            let mut _g = self.data.lock().unwrap();
+            let mut v = vec![];
+            std::mem::swap(&mut *_g, &mut v);
+            v
+        };
+        let notify_end_data = self.notify_end_data.clone();
         ls.spawn_local(async move {
             let _ = spawn_local_task(notifier, "server_start", async move {
                 Self::server_serve(server_sink_message_incoming, server_address).await?;
                 Self::server_connect_to_all_tested_nodes(
                     server_sink_connect_to_node, client_connect_to_peers,
-                    initializer, sender_initialize_state, notify1).await?;
-                Self::server_handle_recv_message(notifier1, driver, receiver, notify2, enable_initialize).await?;
+                    sender_initialize_state, notify1).await?;
+                Self::server_handle_recv_message(
+                    notifier1, notify_end_data,
+                    driver, receiver, notify2, data).await?;
                 Ok::<(), ET>(())
             });
         });
@@ -200,8 +209,7 @@ impl FuzzyServerInner {
     pub async fn server_connect_to_all_tested_nodes(
         sink: Arc<dyn EventSinkAsync<SerdeJsonString>>,
         node_address: HashMap<NID, SocketAddr>,
-        initializer: Arc<dyn Initializer>,
-        sender: Arc<dyn SenderAsync<SerdeJsonString>>,
+        _sender: Arc<dyn SenderAsync<SerdeJsonString>>,
         notify: Arc<Notify>,
     ) -> Res<()> {
         let mut connected = HashSet::new();
@@ -227,26 +235,47 @@ impl FuzzyServerInner {
             }
         }
         trace!("serve player, connect to all");
-        for msg in initializer.message() {
-            let opt = OptSend::new().enable_no_wait(false);
-            sender.send(msg, opt).await?
-        }
+
         notify.notify_one();
         Ok(())
     }
 
+    pub fn splice(channels: usize, vec: Vec<u8>) -> Vec<Vec<u8>> {
+        let each_len = vec.len() / channels + if vec.len() % channels == 0 { 0 } else { 1 };
+        let mut out = vec![Vec::with_capacity(each_len); channels];
+        for (i, d) in vec.iter().copied().enumerate() {
+            out[i % channels].push(d);
+        }
+        out
+    }
+
     async fn server_handle_recv_message(
         notifier: Notifier,
+        notify_end_data:Notifier,
         fuzzy_driver: Arc<FuzzyDriver>,
         receiver: Vec<Arc<dyn ReceiverAsync<FuzzyCommand>>>,
         start: Arc<Notify>,
-        enable_initialize: bool,
+        vec:Vec<u8>,
     ) -> Res<()> {
+        let mut v = Self::splice(receiver.len(), vec);
         start.notified().await;
-        for r in receiver {
+
+        for (i, r) in receiver.iter().enumerate() {
+            let mut _v = vec![];
+            std::mem::swap(&mut _v, &mut v[i]);
+            let _r = r.clone();
+            let _end_notify = notify_end_data.clone();
             let driver = fuzzy_driver.clone();
             let _ = spawn_local_task(notifier.clone(), "", async move {
-                driver.message_loop(r, enable_initialize).await?;
+                let r = driver.message_loop(_r, _v).await;
+                match r {
+                    Ok(_) => {}
+                    Err(e) => {
+                        if e == ET::EOF {
+                            _end_notify.notify_all();
+                        }
+                    }
+                }
                 Ok::<(), ET>(())
             })?;
         }
